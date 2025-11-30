@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AİLEM - Karakterli Pixel Macera</title>
+<style>
+  :root{--pink:#ff66cc;}
+  body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#fffaf0,#f0f8ff);display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .card{width:100%;max-width:980px;background:white;border-radius:14px;padding:18px;box-shadow:0 12px 30px rgba(0,0,0,0.12)}
+  h1{color:var(--pink);text-align:center;margin:6px 0}
+  p.lead{text-align:center;color:#444;margin-top:4px}
+  .grid{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:18px}
+  .box{width:150px;background:linear-gradient(#fff,#f7f7ff);border-radius:12px;padding:10px;text-align:center;cursor:pointer;border:3px solid transparent;box-shadow:0 6px 16px rgba(0,0,0,0.08)}
+  .box.selected{border-color:var(--pink);transform:translateY(-6px)}
+  canvas.char{width:120px;height:140px;background:transparent;display:block;margin:auto}
+  .btn{display:inline-block;padding:10px 18px;border-radius:12px;background:var(--pink);color:white;border:none;font-weight:600;cursor:pointer;margin-top:12px}
+  #startBtn{display:none}
+  #gameArea{display:none;margin-top:18px;position:relative}
+  #hud{position:absolute;left:14px;top:12px;color:white;font-weight:bold;text-shadow:0 2px 6px rgba(0,0,0,0.5);z-index:40;background:rgba(0,0,0,0.18);padding:6px 10px;border-radius:10px}
+  #game{display:block;margin:14px auto;border-radius:10px;background:#cfefff;max-width:100%}
+  #controls{position:fixed;left:0;right:0;bottom:18px;display:flex;justify-content:space-around;pointer-events:auto;z-index:60}
+  #controls button{width:68px;height:68px;border-radius:50%;border:none;font-size:22px;background:#ffb3da;color:#fff}
+  #endModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;z-index:120}
+  #endCard{background:white;padding:20px;border-radius:14px;width:90%;max-width:620px;text-align:center}
+  @media (max-width:560px){ .box{width:110px} canvas.char{width:100px;height:120px} #controls button{width:56px;height:56px} }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>AİLEM</h1>
+  <p class="lead">Hangisisin? Seç ve başla!</p>
+
+  <div id="selection" class="grid"></div>
+
+  <div style="text-align:center">
+    <button id="startBtn" class="btn">Başla</button>
+  </div>
+
+  <div id="gameArea">
+    <div id="hud">⏱ 0 &nbsp;|&nbsp; ❤️ 0</div>
+    <canvas id="game" width="1000" height="520"></canvas>
+  </div>
+</div>
+
+<div id="controls" style="display:none">
+  <button id="leftBtn">◀</button>
+  <button id="jumpBtn">⤒</button>
+  <button id="rightBtn">▶</button>
+</div>
+
+<div id="endModal">
+  <div id="endCard">
+    <h2>Tebrikler!</h2>
+    <p id="endText">Maceran başarıyla bitti!<br>Aile böyle güzel olunca<br>her oyun kazanılır! ❤</p>
+    <div style="margin-top:12px"><button id="replay" class="btn">Tekrar Oyna</button></div>
+  </div>
+</div>
+
+<script>
+/* ========== Character data (B2 pixel style palettes & details) ========== */
+const characters = [
+  {id:'Eymen', top:'#000000', bottom:'#000000', hair:'#5a3b1f', hairLen:'short', eyes:'#2b1f10', skin:'#d8b59e', height:1.12, details:{stripe:true}},
+  {id:'Ezgi', top:'#ff99cc', bottom:'#ff99cc', hair:'#b0896f', hairLen:'long', eyes:'#2fb76e', skin:'#e7c7b3', height:0.86, details:{starSocks:true}},
+  {id:'Zehra', top:'#2b6cff', bottom:'#8a2be2', hair:'#5a3b1f', hairLen:'long', eyes:'#6b3e1f', skin:'#e7c7b3', height:0.95, details:{clip:true}},
+  {id:'Erol', top:'#2b6cff', bottom:'#9aa0a6', hair:'#000000', hairLen:'bald', eyes:'#2fb76e', skin:'#f8e8de', height:1.2, details:{shine:true}},
+  {id:'Suden', top:'#8a2be2', bottom:'#000000', hair:'#b0896f', hairLen:'long', eyes:'#6b3e1f', skin:'#f8e8de', height:1.02, details:{necklace:true}}
+];
+
+const selectionEl = document.getElementById('selection');
+let selectedId = null;
+
+/* Create selection boxes with pixel preview canvases */
+characters.forEach(ch=>{
+  const box = document.createElement('div');
+  box.className='box';
+  box.id = 'box-'+ch.id;
+  box.innerHTML = `<div style="font-weight:700">${ch.id}</div><canvas class="char" id="c-${ch.id}" width="110" height="140"></canvas><div style="margin-top:6px;font-weight:600">${ch.id}</div>`;
+  box.addEventListener('click', ()=>{
+    document.querySelectorAll('.box').forEach(b=>b.classList.remove('selected'));
+    box.classList.add('selected');
+    selectedId = ch.id; document.getElementById('selection').style.display='none'; document.getElementById('startBtn').style.display='none'; document.getElementById('gameArea').style.display='block'; document.getElementById('controls').style.display='flex'; initGame();
+    document.getElementById('startBtn').style.display='inline-block';
+  });
+  selectionEl.appendChild(box);
+});
+
+/* Pixel-draw helper for B2 style (32-ish) */
+function drawPixelSprite(cv, ch){
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // grid scale
+  const px = 4;
+  const ox = 20, oy = 20;
+  // compute vertical scale by height
+  const hscale = ch.height;
+  // hair/back
+  ctx.fillStyle = ch.hair;
+  if(ch.hairLen==='long'){
+    ctx.fillRect(ox + 2*px, oy + 0*px, 12*px, Math.round(10*px*hscale)); // back hair block
+  } else if(ch.hairLen==='short'){
+    ctx.fillRect(ox + 3*px, oy + 1*px, 8*px, 3*px);
+  } else {
+    // bald highlight
+    ctx.fillStyle = '#f2e6e0';
+    ctx.fillRect(ox + 5*px, oy + 1*px, 4*px, 2*px);
+    ctx.fillStyle = ch.hair;
+  }
+  // face
+  ctx.fillStyle = ch.skin;
+  ctx.fillRect(ox + 4*px, oy + 4*px, 8*px, 8*px);
+  // eyes
+  ctx.fillStyle = ch.eyes;
+  ctx.fillRect(ox + 5*px, oy + 6*px, 2*px, 2*px);
+  ctx.fillRect(ox + 9*px, oy + 6*px, 2*px, 2*px);
+  // mouth
+  ctx.fillStyle = '#7a3f2a';
+  ctx.fillRect(ox + 7*px, oy + 10*px, 2*px, 1*px);
+  // top with simple shading
+  ctx.fillStyle = ch.top;
+  ctx.fillRect(ox + 3*px, oy + 12*px, 10*px, 8*px);
+  // bottom
+  ctx.fillStyle = ch.bottom;
+  ctx.fillRect(ox + 3*px, oy + 20*px, 10*px, 5*px);
+  // small details
+  if(ch.details && ch.details.stripe){
+    ctx.fillStyle = '#222';
+    ctx.fillRect(ox + 3*px, oy + 14*px, 10*px, 1*px);
+  }
+  if(ch.details && ch.details.starSocks){
+    ctx.fillStyle = '#ffd700';
+    ctx.fillRect(ox + 7*px, oy + 23*px, 1*px, 1*px);
+  }
+  if(ch.details && ch.details.clip){
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(ox + 3*px, oy + 5*px, 1*px, 1*px);
+  }
+  if(ch.details && ch.details.shine){
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(ox + 2*px, oy + 1*px, 1*px, 1*px);
+  }
+  if(ch.details && ch.details.necklace){
+    ctx.fillStyle = '#ffd27f';
+    ctx.fillRect(ox + 6*px, oy + 18*px, 2*px, 1*px);
+  }
+}
+
+/* draw selection previews */
+characters.forEach(ch=>{
+  const cv = document.getElementById('c-'+ch.id);
+  drawPixelSprite(cv, ch);
+});
+
+/* Game variables */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = canvas.width, H = canvas.height;
+let keys = {};
+let player = {x:60,y:360,w:36,h:52,vy:0,onGround:false,id:null,scale:1};
+const segmentWidth = 420;
+const groundHeights = [440,400,360,420,340,380];
+let scrollX=0, obstacles=[], hearts=[], gift=null, timeSec=0, heartsCollected=0, timerRunning=false;
+let music = new Audio('https://cdn.pixabay.com/download/audio/2022/03/15/audio_6df113c6e2.mp3?filename=romantic-love-113508.mp3');
+music.loop=true; music.volume=0.45;
+
+/* start button behavior */
+document.getElementById('startBtn').addEventListener('click', ()=>{
+  if(!selectedId) return alert('Lütfen bir karakter seç!');
+  document.getElementById('selection').style.display='none';
+  document.getElementById('startBtn').style.display='none';
+  document.getElementById('gameArea').style.display='block';
+  document.getElementById('controls').style.display='flex';
+  initGame();
+});
+
+/* init game */
+function initGame(){
+  const ch = characters.find(c=>c.id===selectedId);
+  player.id = ch.id;
+  player.scale = ch.height;
+  obstacles = []; hearts = [];
+  for(let i=1;i<groundHeights.length;i++){
+    obstacles.push({x:i*segmentWidth+120,y:groundHeights[i]-40,w:50,h:40});
+    hearts.push({x:i*segmentWidth+220,y:groundHeights[i]-100,r:12,taken:false});
+  }
+  gift = {x:segmentWidth*(groundHeights.length-1)+260,y:groundHeights[groundHeights.length-1]-80,w:64,h:64,explode:false,frame:0};
+  timeSec=0; heartsCollected=0; timerRunning=true;
+  setInterval(()=>{ if(timerRunning) timeSec++; document.getElementById('hud').textContent = `⏱ ${timeSec}  |  ❤️ ${heartsCollected}`; },1000);
+  try{ music.play(); }catch(e){}
+  loop();
+}
+
+/* input */
+document.addEventListener('keydown', e=>{ keys[e.key]=true; if((e.key==='ArrowUp'||e.key===' ') && player.onGround){ player.vy=-16; player.onGround=false; } });
+document.addEventListener('keyup', e=> keys[e.key]=false);
+document.getElementById('leftBtn').addEventListener('touchstart', e=>{ e.preventDefault(); keys['ArrowLeft']=true; }); document.getElementById('leftBtn').addEventListener('touchend', e=> keys['ArrowLeft']=false);
+document.getElementById('rightBtn').addEventListener('touchstart', e=>{ e.preventDefault(); keys['ArrowRight']=true; }); document.getElementById('rightBtn').addEventListener('touchend', e=> keys['ArrowRight']=false);
+document.getElementById('jumpBtn').addEventListener('touchstart', e=>{ e.preventDefault(); if(player.onGround){ player.vy=-16; player.onGround=false; } });
+
+/* draw pixel character in world (B2 style) */
+function drawWorldCharacter(worldX, worldY, ch){
+  const px = worldX - scrollX;
+  const scale = ch.height;
+  const bodyW = 36*scale, bodyH = 44*scale;
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.beginPath(); ctx.ellipse(px, worldY-2, 22*scale,8*scale,0,0,Math.PI*2); ctx.fill();
+  // draw simplified pixel-art block scaled (use rectangles to emulate pixel feel)
+  const ox = Math.round(px - 18*scale);
+  const oy = Math.round(worldY - bodyH);
+  const pxs = Math.round(2*scale);
+  // hair/back
+  ctx.fillStyle = ch.hair; if(ch.hairLen==='long') ctx.fillRect(ox+6*pxs, oy+0*pxs, 12*pxs, 24*pxs); else if(ch.hairLen==='short') ctx.fillRect(ox+8*pxs, oy+2*pxs, 8*pxs, 4*pxs); else { ctx.fillStyle='#f1eae6'; ctx.fillRect(ox+10*pxs, oy+1*pxs, 4*pxs,4*pxs); ctx.fillStyle=ch.hair; }
+  // face
+  ctx.fillStyle = ch.skin; ctx.fillRect(ox+6*pxs, oy+6*pxs, 12*pxs, 12*pxs);
+  // eyes
+  ctx.fillStyle = ch.eyes; ctx.fillRect(ox+8*pxs, oy+8*pxs, 2*pxs,2*pxs); ctx.fillRect(ox+14*pxs, oy+8*pxs, 2*pxs,2*pxs);
+  // mouth
+  ctx.fillStyle='#7a3f2a'; ctx.fillRect(ox+11*pxs, oy+14*pxs, 2*pxs,1*pxs);
+  // top
+  ctx.fillStyle = ch.top; ctx.fillRect(ox+4*pxs, oy+18*pxs, 16*pxs, 12*pxs);
+  // bottom
+  ctx.fillStyle = ch.bottom; ctx.fillRect(ox+4*pxs, oy+30*pxs, 16*pxs, 8*pxs);
+  // small details
+  if(ch.details && ch.details.stripe){ ctx.fillStyle='#222'; ctx.fillRect(ox+4*pxs, oy+20*pxs, 16*pxs,1*pxs); }
+  if(ch.details && ch.details.starSocks){ ctx.fillStyle='#ffd700'; ctx.fillRect(ox+14*pxs, oy+34*pxs, 1*pxs,1*pxs); }
+  if(ch.details && ch.details.clip){ ctx.fillStyle='#fff'; ctx.fillRect(ox+4*pxs, oy+8*pxs, 1*pxs,1*pxs); }
+  if(ch.details && ch.details.shine){ ctx.fillStyle='#fff'; ctx.fillRect(ox+3*pxs, oy+1*pxs, 1*pxs,1*pxs); }
+  if(ch.details && ch.details.necklace){ ctx.fillStyle='#ffd27f'; ctx.fillRect(ox+10*pxs, oy+26*pxs, 2*pxs,1*pxs); }
+}
+
+/* draw world decor (pastel city) */
+function drawDecor(){
+  for(let i=0;i<12;i++){
+    const xx = -scrollX + i*220;
+    // simple pastel houses
+    ctx.fillStyle = ['#ffd6e6','#d6f0ff','#fff0b8','#e6d7ff'][i%4];
+    ctx.fillRect(xx+20, 320, 120, 80);
+    ctx.fillStyle = '#fff'; ctx.fillRect(xx+60, 360, 30, 40);
+    // small tree
+    ctx.fillStyle='#b3e6b3'; ctx.beginPath(); ctx.ellipse(xx+10, 320,18,24,0,0,Math.PI*2); ctx.fill();
+  }
+}
+
+/* draw world and entities */
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // sky
+  ctx.fillStyle='#cfefff'; ctx.fillRect(0,0,W,H);
+  drawDecor();
+  // terrain
+  for(let i=0;i<groundHeights.length;i++){
+    const gh = groundHeights[i];
+    const x = i*segmentWidth - scrollX;
+    ctx.fillStyle = '#8ec76e'; ctx.fillRect(x, gh, segmentWidth, H-gh);
+  }
+  // obstacles
+  ctx.fillStyle='#7b3f00';
+  obstacles.forEach(o=> ctx.fillRect(o.x-scrollX, o.y, o.w, o.h));
+  // hearts
+  hearts.forEach(h=>{ if(!h.taken){ ctx.fillStyle='#ff6fa9'; ctx.beginPath(); ctx.arc(h.x-scrollX, h.y, h.r,0,Math.PI*2); ctx.fill(); }});
+  // gift
+  if(!gift.explode){
+    ctx.fillStyle='#ff66cc'; ctx.fillRect(gift.x-scrollX, gift.y, gift.w, gift.h);
+    ctx.fillStyle='#fff'; ctx.fillRect(gift.x-scrollX + gift.w/2 -8, gift.y, 16, gift.h);
+  } else {
+    for(let i=0;i<30;i++){ ctx.fillStyle = `hsl(${(gift.frame*10+i*18)%360},80%,60%)`; const rx=gift.x-scrollX+gift.w/2+Math.cos(i)*gift.frame*2; const ry=gift.y+gift.h/2+Math.sin(i)*gift.frame*2; ctx.fillRect(rx,ry,6,6); }
+    ctx.fillStyle='rgba(255,200,240,0.45)'; ctx.beginPath(); ctx.arc(gift.x-scrollX+gift.w/2,gift.y+gift.h/2,gift.frame*5+16,0,Math.PI*2); ctx.fill();
+  }
+  // draw player
+  const ch = characters.find(c=>c.id===player.id);
+  drawWorldCharacter(player.x, player.y+player.h, ch);
+}
+
+/* collision resolution similar to earlier fixed logic */
+function resolveCollisions(){
+  let seg = Math.floor(player.x/segmentWidth); seg = Math.max(0, Math.min(seg, groundHeights.length-1));
+  const gy = groundHeights[seg];
+  if(player.y + player.h >= gy){ player.y = gy - player.h; player.vy = 0; player.onGround=true; } else { player.onGround=false; }
+  obstacles.forEach(o=>{
+    if(player.x < o.x + o.w && player.x + player.w > o.x && player.y < o.y + o.h && player.y + player.h > o.y){
+      const prevY = player.y - player.vy;
+      if(prevY + player.h <= o.y){ player.y = o.y - player.h; player.vy = 0; player.onGround=true; }
+      else {
+        if(player.x + player.w/2 < o.x + o.w/2){ player.x = o.x - player.w - 1; } else { player.x = o.x + o.w + 1; }
+        player.vy *= 0.2;
+      }
+    }
+  });
+  hearts.forEach(h=>{
+    if(!h.taken && Math.abs((player.x+player.w/2)-h.x) < 28 && Math.abs((player.y+player.h/2)-h.y) < 28){
+      h.taken=true; heartsCollected++; document.getElementById('hud').textContent = `⏱ ${timeSec}  |  ❤️ ${heartsCollected}`; const s=new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_5f1b2d7a34.mp3?filename=collect-coin-43872.mp3'); s.volume=0.6; s.play().catch(()=>{}); }
+  });
+  if(!gift.explode && player.x + player.w > gift.x && player.x < gift.x + gift.w && player.y + player.h > gift.y){ gift.explode=true; }
+}
+
+/* update & loop */
+function update(){ if(keys['ArrowRight']) player.x += 4; if(keys['ArrowLeft']) player.x -= 4; player.vy += 1.2; player.y += player.vy; resolveCollisions(); if(gift.explode){ gift.frame++; if(gift.frame===1){ const pop=new Audio('https://cdn.pixabay.com/download/audio/2022/02/01/audio_2f4b9b5f14.mp3?filename=pop-6023.mp3'); pop.volume=0.6; pop.play().catch(()=>{}); } if(gift.frame>60){ timerRunning=false; music.pause(); showEnd(); } } scrollX = player.x - 220; if(scrollX<0) scrollX=0; const maxScroll = segmentWidth*(groundHeights.length)-W+80; if(scrollX>maxScroll) scrollX=maxScroll; }
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+function showEnd(){ document.getElementById('endModal').style.display='flex'; document.getElementById('endText').textContent = `Maceran başarıyla bitti!\nAile böyle güzel olunca\nher oyun kazanılır! ❤`; }
+document.addEventListener('keydown', e=>{ keys[e.key]=true; if((e.key==='ArrowUp'||e.key===' ')&&player.onGround){ player.vy=-16; player.onGround=false; } });
+document.addEventListener('keyup', e=> keys[e.key]=false);
+document.getElementById('leftBtn').addEventListener('touchstart', e=>{ e.preventDefault(); keys['ArrowLeft']=true; }); document.getElementById('leftBtn').addEventListener('touchend', e=> keys['ArrowLeft']=false);
+document.getElementById('rightBtn').addEventListener('touchstart', e=>{ e.preventDefault(); keys['ArrowRight']=true; }); document.getElementById('rightBtn').addEventListener('touchend', e=> keys['ArrowRight']=false);
+document.getElementById('jumpBtn').addEventListener('touchstart', e=>{ e.preventDefault(); if(player.onGround){ player.vy=-16; player.onGround=false; } });
+document.getElementById('replay').addEventListener('click', ()=> location.reload());
+
+/* make controls visible on mobile */
+document.getElementById('controls').style.display='flex';
+</script>
+</body>
+</html>
